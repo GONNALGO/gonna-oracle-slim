@@ -1,0 +1,1 @@
+Pinned replay engine bundles, one per released client build: `engine-<VER>.mjs`, built by `node scripts/build-replay-bundle.mjs <VER>` (or `--from-dist`) after each vault-door release and committed here. The oracle server refuses scores whose log `build` has no bundle (`BUILD UNKNOWN TO THE ORACLE`) and refuses to boot with `REPLAY_ENFORCE=1` if this directory is empty.

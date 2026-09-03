@@ -110,7 +110,13 @@ export interface ReplayResult {
  * first checkpoint — deterministic in tests). In-process by design for M2
  * (frame cap 300k + rate limits); worker_threads isolation = M3 hardening.
  */
-export function replayCampaign(game: any, masks: Uint8Array, timeoutMs: number, edges?: Uint8Array): ReplayResult {
+const yieldLoop = (): Promise<void> => new Promise((r) => setImmediate(r));
+
+// v18.1.5 (Prince PIT-8, 60028 frames, REPLAY TIMEOUT + Render 502): the
+// replay is ASYNC now — every 1024 steps it yields to the event loop, so a
+// long legit replay (a 15-wave pro run can need minutes on the free-tier
+// CPU) can NEVER starve /v1/health and get the service killed mid-sign.
+export async function replayCampaign(game: any, masks: Uint8Array, timeoutMs: number, edges?: Uint8Array): Promise<ReplayResult> {
   const down = game.input.down;
   const pressed = game.input.pressed;
   const t0 = Date.now();
@@ -118,7 +124,10 @@ export function replayCampaign(game: any, masks: Uint8Array, timeoutMs: number, 
   let steps = 0;
   while (i < masks.length) {
     if (++steps > masks.length * 4 + 20000) throw new ReplayStuckError();
-    if ((steps & 0x3ff) === 0 && Date.now() - t0 >= timeoutMs) throw new ReplayTimeoutError();
+    if ((steps & 0x3ff) === 0) {
+      if (Date.now() - t0 >= timeoutMs) throw new ReplayTimeoutError();
+      await yieldLoop(); // let health checks and other requests breathe
+    }
     const sc = game.scene;
     if (sc !== 'play') {
       // v17.0.7 (Friedbean REPLAY MISMATCH): the fixed client mutes gameplay
@@ -250,7 +259,7 @@ export class ReplayVerifier {
         if (opts.stageMode === 'stage') startStageRun(game, opts.stageIdx ?? 0, opts.seedLabel);
         else startFullRunSeeded(eng, game, opts.seedLabel);
         game.frame = framePhase; // emulate the client page's boot-frame phase
-        result = replayCampaign(game, opts.masks, this.timeoutMs, opts.edges);
+        result = await replayCampaign(game, opts.masks, this.timeoutMs, opts.edges);
       } catch (e) {
         // diag: where the engine was when the abort fired (score/scene only —
         // the replay contract has no per-frame client trace to diff against)
